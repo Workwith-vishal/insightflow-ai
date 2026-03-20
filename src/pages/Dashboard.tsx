@@ -19,6 +19,11 @@ const trendData = [
   { name: "W7", value: 290 }, { name: "W8", value: 380 },
 ];
 
+const scatterData = [
+  { name: "A", value: 40 }, { name: "B", value: 85 }, { name: "C", value: 55 },
+  { name: "D", value: 70 }, { name: "E", value: 30 }, { name: "F", value: 95 },
+];
+
 const sampleInsights = [
   { text: "Revenue grew 37% month-over-month in June, driven by Electronics.", type: "trend" as const },
   { text: "Electronics outsells the next category (Clothing) by 40%.", type: "comparison" as const },
@@ -30,7 +35,7 @@ export default function Dashboard() {
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-foreground">Dashboard</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Upload a dataset to see real insights. Showing sample data.</p>
+        <p className="text-sm text-muted-foreground mt-0.5">Click the ⚙ icon on any chart to customize type, colors, and labels.</p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -41,14 +46,13 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ChartPanel title="Revenue Over Time" subtitle="Monthly revenue trend" type="area" data={revenueData} dataKey="value" />
+        <ChartPanel title="Revenue Over Time" subtitle="Monthly revenue trend" type="area" data={revenueData} dataKey="value" config={{ xLabel: "Month", yLabel: "Revenue ($)" }} />
         <ChartPanel title="Sales by Category" subtitle="Distribution breakdown" type="pie" data={categoryData} dataKey="value" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2">
-          <ChartPanel title="Weekly Active Users" subtitle="8-week trend" type="bar" data={trendData} dataKey="value" />
-        </div>
+        <ChartPanel title="Weekly Active Users" subtitle="8-week trend" type="bar" data={trendData} dataKey="value" />
+        <ChartPanel title="Performance Scatter" subtitle="Segment comparison" type="scatter" data={scatterData} dataKey="value" config={{ palette: "Amber" }} />
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
