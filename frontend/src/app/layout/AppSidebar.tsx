@@ -1,6 +1,7 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { LayoutDashboard, Upload, MessageSquare, Sparkles, Database } from "lucide-react";
 import { motion } from "framer-motion";
+import { useDataset } from "@/shared/data/DataContext";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -10,6 +11,11 @@ const navItems = [
 
 export default function AppSidebar() {
   const location = useLocation();
+  const { dataset } = useDataset();
+  const datasetSummary =
+    dataset && Number.isFinite(dataset.totalRows)
+      ? `${dataset.fileName} | ${dataset.totalRows.toLocaleString()} rows`
+      : "No dataset loaded";
 
   return (
     <aside className="w-16 lg:w-56 bg-sidebar border-r border-sidebar-border flex flex-col shrink-0">
@@ -58,7 +64,7 @@ export default function AppSidebar() {
       <div className="p-3 border-t border-sidebar-border">
         <div className="flex items-center gap-2 px-2">
           <Database className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="hidden lg:block text-xs text-muted-foreground">No dataset loaded</span>
+          <span className="hidden lg:block text-xs text-muted-foreground">{datasetSummary}</span>
         </div>
       </div>
     </aside>

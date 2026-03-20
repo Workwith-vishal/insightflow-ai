@@ -8,6 +8,7 @@ import NotFoundPage from "@/app/routes/NotFoundPage";
 import ChatPage from "@/features/chat/pages/ChatPage";
 import DashboardPage from "@/features/dashboard/pages/DashboardPage";
 import UploadPage from "@/features/upload/pages/UploadPage";
+import { DataProvider } from "@/shared/data/DataContext";
 
 const queryClient = new QueryClient();
 
@@ -16,16 +17,23 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route element={<AppLayout />}>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/upload" element={<UploadPage />} />
-            <Route path="/chat" element={<ChatPage />} />
-          </Route>
-          <Route path="*" element={<NotFoundPage />} />
-        </Routes>
-      </BrowserRouter>
+      <DataProvider>
+        <BrowserRouter
+          future={{
+            v7_startTransition: true,
+            v7_relativeSplatPath: true,
+          }}
+        >
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/upload" element={<UploadPage />} />
+              <Route path="/chat" element={<ChatPage />} />
+            </Route>
+            <Route path="*" element={<NotFoundPage />} />
+          </Routes>
+        </BrowserRouter>
+      </DataProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );

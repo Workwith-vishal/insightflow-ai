@@ -1,7 +1,11 @@
 {
   "name": "insightflow-ai",
   "private": true,
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
   "scripts": {
+    "dev": "concurrently -k -n frontend,backend -c cyan,green \"npm run dev:frontend\" \"npm run dev:backend\"",
     "dev:frontend": "npm --prefix frontend run dev",
     "build:frontend": "npm --prefix frontend run build",
     "test:frontend": "npm --prefix frontend run test",

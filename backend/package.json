@@ -4,6 +4,12 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node src/index.js"
+    "dev": "node src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "insightflow-ai": "file:..",
+    "mongoose": "^9.3.1"
   }
 }

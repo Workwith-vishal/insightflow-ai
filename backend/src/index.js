@@ -1,22 +1,41 @@
-import http from "node:http";
+import { env } from "./config/env.js";
+import { createServer } from "./http/server.js";
+import { connectToDatabase } from "./storage/mongo.js";
 
-const port = process.env.PORT || 3001;
+const server = createServer();
+const maxPortAttempts = 10;
+let currentPort = env.port;
+let attempts = 0;
 
-const server = http.createServer((req, res) => {
-  if (req.url === "/health") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok" }));
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") {
+    attempts += 1;
+
+    if (attempts >= maxPortAttempts) {
+      console.error(
+        `Unable to find an open port after trying ${maxPortAttempts} ports starting at ${env.port}.`,
+      );
+      process.exit(1);
+    }
+
+    currentPort += 1;
+    console.warn(`Port ${currentPort - 1} is already in use. Retrying on port ${currentPort}...`);
+    server.listen(currentPort);
     return;
   }
 
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(
-    JSON.stringify({
-      message: "InsightFlow backend scaffold is running.",
-    }),
-  );
+  console.error("Backend failed to start.", error);
+  process.exit(1);
 });
 
-server.listen(port, () => {
-  console.log(`Backend server listening on http://localhost:${port}`);
-});
+try {
+  await connectToDatabase();
+  console.log(`MongoDB connected: ${env.mongoUri}`);
+
+  server.listen(currentPort, () => {
+    console.log(`Backend server listening on http://localhost:${currentPort}`);
+  });
+} catch (error) {
+  console.error("Failed to connect to MongoDB.", error);
+  process.exit(1);
+}

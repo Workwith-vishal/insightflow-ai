@@ -2,26 +2,25 @@ import { useState, useRef, useEffect } from "react";
 import { Send, Sparkles, User } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
+import { useDataset } from "@/shared/data/DataContext";
+import { chatApi } from "@/shared/services/api";
+import type { DatasetChart } from "@/shared/types/dataset";
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   sql?: string;
+  chart?: DatasetChart | null;
 }
 
-const SAMPLE_RESPONSES: Record<string, { content: string; sql?: string }> = {
-  default: {
-    content: "Upload a CSV dataset first, then ask me questions about your data. I can generate SQL queries, create charts, and provide business insights.",
-  },
-};
-
 export default function ChatInterface() {
+  const { dataset } = useDataset();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
       role: "assistant",
-      content: "👋 Welcome to **InsightFlow AI**! Upload a dataset and ask me anything — I'll analyze your data, generate charts, and surface key insights.\n\nTry: *\"What are the top 5 products by revenue?\"*",
+      content: "Welcome to **InsightFlow AI**. Upload a dataset and ask a question about it.\n\nTry: *\"What are the top 5 products by revenue?\"*",
     },
   ]);
   const [input, setInput] = useState("");
@@ -32,23 +31,35 @@ export default function ChatInterface() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  const handleSend = () => {
-    if (!input.trim() || isLoading) return;
+  const handleSend = async () => {
+    if (!dataset || !input.trim() || isLoading) return;
 
     const userMsg: Message = { id: Date.now().toString(), role: "user", content: input };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setIsLoading(true);
 
-    // Mock response - will be replaced with real AI later
-    setTimeout(() => {
-      const resp = SAMPLE_RESPONSES.default;
+    try {
+      const resp = await chatApi.send(userMsg.content);
       setMessages((prev) => [
         ...prev,
-        { id: (Date.now() + 1).toString(), role: "assistant", content: resp.content, sql: resp.sql },
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: resp.answer,
+          sql: resp.sql,
+          chart: resp.chart,
+        },
       ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Chat request failed.";
+      setMessages((prev) => [
+        ...prev,
+        { id: (Date.now() + 1).toString(), role: "assistant", content: message },
+      ]);
+    } finally {
       setIsLoading(false);
-    }, 1200);
+    }
   };
 
   return (
@@ -92,6 +103,14 @@ export default function ChatInterface() {
                     <pre className="text-xs font-mono text-primary overflow-x-auto">{msg.sql}</pre>
                   </div>
                 )}
+                {msg.chart && (
+                  <div className="mt-3 rounded-md border border-border p-3">
+                    <p className="text-xs font-medium text-foreground">{msg.chart.title}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Suggested {msg.chart.type} chart with {msg.chart.data.length} data points.
+                    </p>
+                  </div>
+                )}
               </div>
               {msg.role === "user" && (
                 <div className="w-7 h-7 rounded-md bg-secondary flex items-center justify-center shrink-0 mt-0.5">
@@ -122,13 +141,14 @@ export default function ChatInterface() {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder="Ask about your data..."
+            onKeyDown={(e) => e.key === "Enter" && void handleSend()}
+            placeholder={dataset ? "Ask about your data..." : "Upload a dataset before asking questions"}
+            disabled={!dataset}
             className="flex-1 bg-card border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           />
           <button
-            onClick={handleSend}
-            disabled={!input.trim() || isLoading}
+            onClick={() => { void handleSend(); }}
+            disabled={!dataset || !input.trim() || isLoading}
             className="bg-primary text-primary-foreground rounded-lg px-4 py-2.5 hover:opacity-90 transition-opacity disabled:opacity-40"
           >
             <Send className="w-4 h-4" />
