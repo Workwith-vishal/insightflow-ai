@@ -58,7 +58,7 @@ export default function AppLayout() {
         )}
       </AnimatePresence>
 
-      <main className="flex-1 overflow-hidden flex flex-col">
+      <main className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <div className="h-14 border-b border-border/60 bg-card/40 backdrop-blur flex items-center justify-between px-4">
           <div className="flex items-center gap-3">
             {isMobile && (
@@ -106,7 +106,7 @@ export default function AppLayout() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.2 }}
-            className="flex-1 overflow-auto"
+            className="flex-1 min-h-0 overflow-auto"
           >
             <Outlet />
           </motion.div>

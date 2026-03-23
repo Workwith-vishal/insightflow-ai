@@ -3,6 +3,8 @@ import { buildCounts } from "../utils/csv.js";
 const CHART_INTENT = /(show|chart|graph|distribution|compare|breakdown|trend|top|vs|histogram|pie|bar|line|scatter)/i;
 const TABLE_INTENT = /(table|list|rows|data)/i;
 const COUNT_INTENT = /(count|how many|number of)/i;
+const EXPERIENCE_INTENT = /(experience|years? of experience|exp)/i;
+const EDUCATION_INTENT = /(education|degree)/i;
 
 const PALETTE_MAP = {
   cyan: "Cyan",
@@ -110,7 +112,7 @@ const buildChartPayload = ({
 
 export const buildStructuredChatResponse = ({ dataset, question, baseAnswer }) => {
   const query = lower(question);
-  const wantsChart = CHART_INTENT.test(query);
+  const wantsChart = CHART_INTENT.test(query) || EDUCATION_INTENT.test(query) || EXPERIENCE_INTENT.test(query);
   const wantsTable = TABLE_INTENT.test(query);
   const wantsCount = COUNT_INTENT.test(query);
 
@@ -150,7 +152,53 @@ export const buildStructuredChatResponse = ({ dataset, question, baseAnswer }) =
   let queryIntent = "text";
 
   if (wantsChart) {
-    if (query.includes("histogram") && salaryColumn) {
+    if (EXPERIENCE_INTENT.test(query) && experienceColumn) {
+      if (query.includes("top") || query.includes("most")) {
+        const counts = buildCounts(workingRows, headers.indexOf(experienceColumn.name));
+        const chartRows = counts.slice(0, 8).map((entry) => ({
+          [experienceColumn.name]: entry.name,
+          count: entry.value,
+        }));
+        chart = buildChartPayload({
+          title: `${experienceColumn.name} (Top)` ,
+          chartType: "bar",
+          xKey: experienceColumn.name,
+          yKey: "count",
+          rows: chartRows,
+          config: { xLabel: experienceColumn.name, yLabel: "Count", palette: "cyan", showGrid: true },
+        });
+        queryIntent = "top_experience";
+      } else {
+        const chartRows = buildHistogram(workingRows, experienceColumn.name);
+        if (chartRows.length) {
+          chart = buildChartPayload({
+            title: `${experienceColumn.name} Distribution`,
+            chartType: "bar",
+            xKey: "bucket",
+            yKey: "count",
+            rows: chartRows,
+            config: { xLabel: experienceColumn.name, yLabel: "Count", palette: "cyan", showGrid: true },
+          });
+          queryIntent = "experience_histogram";
+        }
+      }
+    } else if (EDUCATION_INTENT.test(query) && educationColumn) {
+      const counts = buildCounts(workingRows, headers.indexOf(educationColumn.name));
+      const topCounts = counts.slice(0, 5);
+      const chartRows = topCounts.map((entry) => ({
+        [educationColumn.name]: entry.name,
+        count: entry.value,
+      }));
+      chart = buildChartPayload({
+        title: "Top Education Levels",
+        chartType: "bar",
+        xKey: educationColumn.name,
+        yKey: "count",
+        rows: chartRows,
+        config: { xLabel: educationColumn.name, yLabel: "Count", palette: "cyan", showGrid: true },
+      });
+      queryIntent = "top_education";
+    } else if (query.includes("histogram") && salaryColumn) {
       const chartRows = buildHistogram(workingRows, salaryColumn.name);
       if (chartRows.length) {
         chart = buildChartPayload({
@@ -247,6 +295,12 @@ export const buildStructuredChatResponse = ({ dataset, question, baseAnswer }) =
   if (!answer) {
     if (wantsCount && filterKeyword && educationColumn) {
       answer = `There are ${workingRows.length.toLocaleString()} rows matching ${filterKeyword} in ${educationColumn.name}.`;
+    } else if (queryIntent === "top_education" && educationColumn) {
+      const counts = buildCounts(workingRows, headers.indexOf(educationColumn.name));
+      const top = counts[0];
+      if (top) {
+        answer = `The most common education level is ${top.name}, with ${top.value.toLocaleString()} people. Here is a quick breakdown of the top education categories.`;
+      }
     } else {
       answer = "Here is the summary based on your request.";
     }

@@ -671,6 +671,60 @@ export const summarizeDataset = (dataset) => {
       });
   }
 
+  // Fallbacks to keep 4 charts when possible (safe, bounded, and data-aware)
+  const addChartSuggestion = (chart) => {
+    if (!chart || !Array.isArray(chart.data) || chart.data.length === 0) return;
+    if (chartSuggestions.find((existing) => existing.title === chart.title)) return;
+    chartSuggestions.push(chart);
+  };
+
+  if (chartSuggestions.length < 4) {
+    const fallbackCategorical = categoricalColumns.find(
+      (column) => !column.isHighCardText && !column.isNearUnique,
+    );
+    if (fallbackCategorical) {
+      const data = buildCounts(rows, headers.indexOf(fallbackCategorical.name), {
+        multiValue: fallbackCategorical.isMultiValue,
+      }).slice(0, 8);
+      addChartSuggestion({
+        title: `${fallbackCategorical.name} Breakdown`,
+        type: "bar",
+        dataKey: "value",
+        data,
+      });
+    }
+  }
+
+  if (chartSuggestions.length < 4) {
+    const fallbackNumeric = numericColumns[0];
+    if (fallbackNumeric) {
+      const numericIndex = headers.indexOf(fallbackNumeric.name);
+      const values = rows
+        .map((row) => Number(row[numericIndex]))
+        .filter((value) => Number.isFinite(value));
+      if (values.length) {
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const bins = 6;
+        const size = (max - min) / bins || 1;
+        const buckets = Array.from({ length: bins }, (_, i) => ({
+          name: `${(min + i * size).toFixed(1)}-${(min + (i + 1) * size).toFixed(1)}`,
+          value: 0,
+        }));
+        values.forEach((value) => {
+          const index = Math.min(Math.floor((value - min) / size), bins - 1);
+          buckets[index].value += 1;
+        });
+        addChartSuggestion({
+          title: `${fallbackNumeric.name} Distribution`,
+          type: "bar",
+          dataKey: "value",
+          data: buckets,
+        });
+      }
+    }
+  }
+
   if (chartSuggestions.length === 0) {
     addInsight(`Dataset contains ${rows.length.toLocaleString()} rows across ${headers.length} columns.`);
   }

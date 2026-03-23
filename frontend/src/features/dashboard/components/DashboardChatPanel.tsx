@@ -4,28 +4,46 @@ import { ChevronRight, MessageSquare, Send, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { useDataset } from "@/shared/data/DataContext";
 import { chatApi } from "@/shared/services/api";
+import MiniChartCard from "@/features/dashboard/components/MiniChartCard";
+import type { ChatResponse } from "@/shared/types/dataset";
+import { useIsMobile } from "@/shared/hooks/use-mobile";
 
 interface PanelMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  chart?: ChatResponse["chart"];
 }
 
 let _panelCounter = 0;
 const panelId = () => `panel-msg-${Date.now()}-${++_panelCounter}`;
 
-export default function DashboardChatPanel() {
+export default function DashboardChatPanel({ className }: { className?: string }) {
   const { dataset } = useDataset();
+  const isMobile = useIsMobile();
   const [messages, setMessages] = useState<PanelMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!collapsed) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isMobile && collapsed) {
+      setCollapsed(false);
     }
+  }, [isMobile, collapsed]);
+
+  useEffect(() => {
+    if (collapsed) return;
+    const container = scrollRef.current;
+    if (!container) return;
+    const prefersReduced =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: prefersReduced ? "auto" : "smooth",
+    });
   }, [messages, isLoading, collapsed]);
 
   const clearChat = useCallback(() => {
@@ -44,7 +62,12 @@ export default function DashboardChatPanel() {
     try {
       const history = [...messages, userMsg].map(({ role, content }) => ({ role, content }));
       const resp = await chatApi.send(userMsg.content, dataset, history);
-      const assistantMsg: PanelMessage = { id: panelId(), role: "assistant", content: resp.answer };
+      const assistantMsg: PanelMessage = {
+        id: panelId(),
+        role: "assistant",
+        content: resp.answer,
+        chart: resp.chart || null,
+      };
       setMessages((prev) => [...prev, assistantMsg].slice(-20));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Chat request failed.";
@@ -67,9 +90,11 @@ export default function DashboardChatPanel() {
   return (
     <motion.aside
       initial={false}
-      animate={{ width: collapsed ? 48 : 320 }}
+      animate={{ width: isMobile ? "100%" : collapsed ? 48 : "100%" }}
       transition={{ type: "spring", bounce: 0.1, duration: 0.4 }}
-      className="h-full shrink-0 border-l border-border bg-card flex flex-col overflow-hidden"
+      className={`shrink-0 border border-border/70 bg-card/70 backdrop-blur-sm rounded-2xl flex flex-col overflow-hidden ${
+        isMobile ? "h-auto" : "h-full"
+      } ${className || ""}`}
     >
       <AnimatePresence mode="wait">
         {collapsed ? (
@@ -92,7 +117,7 @@ export default function DashboardChatPanel() {
             exit={{ opacity: 0 }}
             className="flex flex-col h-full"
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border/70">
               <div>
                 <p className="text-sm font-medium text-foreground">Ask about your data</p>
                 <p className="text-xs text-muted-foreground">Compact dashboard chat</p>
@@ -100,7 +125,7 @@ export default function DashboardChatPanel() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={clearChat}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-md border border-border bg-muted/30 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-md border border-border bg-muted/30 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label="Clear chat"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -108,7 +133,7 @@ export default function DashboardChatPanel() {
                 </button>
                 <button
                   onClick={() => setCollapsed(true)}
-                  className="p-2 rounded-md border border-border bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                  className="p-2 rounded-md border border-border bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label="Minimize chat"
                 >
                   <ChevronRight className="w-4 h-4" />
@@ -116,7 +141,7 @@ export default function DashboardChatPanel() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
               {!dataset && (
                 <div className="rounded-lg border border-dashed border-border p-4 text-xs text-muted-foreground text-center">
                   Upload a dataset on the Upload page to start asking questions.
@@ -153,6 +178,7 @@ export default function DashboardChatPanel() {
                     >
                       {msg.content}
                     </ReactMarkdown>
+                    {msg.role === "assistant" && <MiniChartCard chart={msg.chart} showControls />}
                   </div>
                 </div>
               ))}
@@ -165,23 +191,22 @@ export default function DashboardChatPanel() {
                 </div>
               )}
 
-              <div ref={bottomRef} />
             </div>
 
-            <div className="p-3 border-t border-border">
-              <div className="flex gap-2">
+            <div className="p-4 border-t border-border/70">
+              <div className="flex items-stretch gap-2">
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={dataset ? "Ask about your data..." : "Upload a dataset first"}
                   disabled={!dataset || isLoading}
-                  className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                  className="flex-1 h-10 bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
                 />
                 <button
                   onClick={() => void handleSend()}
                   disabled={!dataset || !input.trim() || isLoading}
-                  className="bg-primary text-primary-foreground rounded-lg px-3 py-2 hover:opacity-90 transition-opacity disabled:opacity-40"
+                  className="h-10 bg-primary text-primary-foreground rounded-lg px-3 py-2 hover:opacity-90 transition-opacity disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <Send className="w-4 h-4" />
                 </button>

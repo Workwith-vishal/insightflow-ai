@@ -18,10 +18,21 @@ export const chatController = async (req, res) => {
     return;
   }
 
-  const result = await generateDatasetAnswer({
-    dataset,
-    question: body.message,
-  });
+  let result;
+  try {
+    result = await generateDatasetAnswer({
+      dataset,
+      question: body.message,
+    });
+  } catch {
+    result = {
+      answer: "",
+      sql: "",
+      insights: [],
+      chart: null,
+      source: "fallback",
+    };
+  }
 
   const structured = buildStructuredChatResponse({
     dataset,
