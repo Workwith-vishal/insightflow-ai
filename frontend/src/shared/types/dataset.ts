@@ -29,8 +29,8 @@ export interface DatasetChart {
   xKey?: string;
   dataKey: string;
   data?: Array<{
-    name?: string;
-    value?: number;
+    name: string | number;
+    value: number;
     label?: string | number;
     x?: string | number;
     y?: number;

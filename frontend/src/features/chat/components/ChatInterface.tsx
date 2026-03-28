@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Send, Sparkles, User, AlertCircle, RotateCcw } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
@@ -6,26 +6,21 @@ import { useDataset } from "@/shared/data/DataContext";
 import { chatApi } from "@/shared/services/api";
 import type { ChatChartPayload, ChatTablePayload, DatasetChart } from "@/shared/types/dataset";
 import ChatChartCard from "@/features/chat/components/ChatChartCard";
-
-// ─── Types ─────────────────────────────────────────────────────────────────────
+import ChartPanel from "@/features/dashboard/components/charts/ChartPanel";
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  isError?: boolean;       // FIX #7 — distinguish error bubbles visually
+  isError?: boolean;
   sql?: string;
   chart?: DatasetChart | null;
   chartPayload?: ChatChartPayload | null;
   table?: ChatTablePayload | null;
 }
 
-// ─── Stable ID generator (avoids Date.now() collision) ─────────────────────────
-
-let _counter = 0;
-const uid = () => `msg-${Date.now()}-${++_counter}`;
-
-// ─── Welcome message factory (dataset-aware) ────────────────────────────────────
+let counter = 0;
+const uid = () => `msg-${Date.now()}-${++counter}`;
 
 const buildWelcome = (hasDataset: boolean): Message => ({
   id: "welcome",
@@ -34,41 +29,6 @@ const buildWelcome = (hasDataset: boolean): Message => ({
     ? "Dataset loaded. Ask me anything about your data.\n\nTry: *\"What are the top 5 products by revenue?\"*"
     : "Welcome to **InsightFlow AI**. Upload a dataset and ask a question about it.\n\nTry: *\"What are the top 5 products by revenue?\"*",
 });
-
-// ─── Chart renderer ─────────────────────────────────────────────────────────────
-
-function ChartPreview({ chart }: { chart: DatasetChart }) {
-  // Renders a simple bar-style preview so the chart data is actually visible.
-  // Swap this out for Recharts / Chart.js if a full chart library is available.
-  const max = Math.max(...chart.data.map((d) => Number(d.value) || 0));
-
-  return (
-    <div className="mt-3 rounded-md border border-border p-3 space-y-2">
-      <p className="text-xs font-medium text-foreground">{chart.title}</p>
-      <p className="text-xs text-muted-foreground capitalize">{chart.type} chart · {chart.data.length} data points</p>
-      <div className="space-y-1.5 mt-2">
-        {chart.data.slice(0, 8).map((point, i) => {
-          const pct = max > 0 ? (Number(point.value) / max) * 100 : 0;
-          return (
-            <div key={i} className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground w-24 truncate shrink-0">{String(point.label ?? point.x ?? i)}</span>
-              <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary rounded-full transition-all"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-              <span className="text-xs text-muted-foreground w-12 text-right shrink-0">{point.value}</span>
-            </div>
-          );
-        })}
-        {chart.data.length > 8 && (
-          <p className="text-xs text-muted-foreground">+{chart.data.length - 8} more rows</p>
-        )}
-      </div>
-    </div>
-  );
-}
 
 const isStructuredChart = (chart: unknown): chart is ChatChartPayload => {
   if (!chart || typeof chart !== "object") return false;
@@ -82,62 +42,148 @@ const isLegacyStructuredChart = (
   return "chart_type" in chart && "rows" in chart && "xKey" in chart && "yKey" in chart;
 };
 
-const toChatChartPayload = (chart: DatasetChart): ChatChartPayload => {
-  const xKey = "name";
-  const yKey = chart.dataKey || "value";
-  const rows = chart.data.map((entry) => ({
-    [xKey]: entry.name ?? entry.label ?? entry.x ?? "",
-    [yKey]: Number(entry.value ?? entry.y ?? 0),
-  }));
+const isDatasetChart = (chart: unknown): chart is DatasetChart => {
+  if (!chart || typeof chart !== "object") return false;
+  return "type" in chart && "dataKey" in chart;
+};
+
+const normalizeDatasetChart = (chart: DatasetChart): DatasetChart | null => {
+  const rawData = Array.isArray(chart.data) ? chart.data : [];
+  const data = rawData
+    .map((point, index) => {
+      const rawLabel = point?.name ?? point?.label ?? point?.x ?? `Item ${index + 1}`;
+      const value = typeof point?.value === "number" ? point.value : Number(point?.value);
+      const label = String(rawLabel);
+
+      if (!label || !Number.isFinite(value)) {
+        return null;
+      }
+
+      return {
+        ...point,
+        name: label,
+        value: Number(value),
+        x: point?.x ?? label,
+        label: point?.label ?? label,
+      };
+    })
+    .filter((point): point is NonNullable<typeof point> => Boolean(point));
+
+  if (!data.length) {
+    return null;
+  }
 
   return {
-    title: chart.title,
-    chartType: chart.type,
+    ...chart,
+    xKey: chart.xKey || "name",
+    dataKey: chart.dataKey || "value",
+    data,
+  };
+};
+
+const toDatasetChart = (payload: ChatChartPayload): DatasetChart => ({
+  title: payload.title,
+  type: payload.chartType,
+  xKey: payload.xKey,
+  dataKey: payload.yKey,
+  config: payload.config,
+  data: payload.rows.map((row, index) => {
+    const rawLabel = row[payload.xKey] ?? row.name ?? row.label ?? row.x ?? `Item ${index + 1}`;
+    const label = String(rawLabel);
+    return {
+      ...row,
+      name: label,
+      value: Number(row[payload.yKey] ?? row.value ?? row.y ?? 0),
+      x: String(row.x ?? row[payload.xKey] ?? label),
+      label: String(row.label ?? row[payload.xKey] ?? label),
+    };
+  }),
+});
+
+const toChatChartPayload = (chart: DatasetChart): ChatChartPayload => {
+  const normalized = normalizeDatasetChart(chart);
+  const xKey = normalized?.xKey || "name";
+  const yKey = normalized?.dataKey || "value";
+  const rows = (normalized?.data || []).map((entry) => {
+    const label = String(entry[xKey] ?? entry.name ?? entry.label ?? entry.x ?? "");
+    return {
+      ...entry,
+      [xKey]: label,
+      [yKey]: Number(entry[yKey] ?? entry.value ?? entry.y ?? 0),
+    };
+  });
+
+  return {
+    title: normalized?.title || chart.title,
+    chartType: normalized?.type || chart.type,
     xKey,
     yKey,
     rows,
     config: {
-      xLabel: "",
-      yLabel: "",
-      palette: "cyan",
-      showGrid: true,
-      showLegend: chart.type === "pie",
-      curved: false,
+      xLabel: normalized?.config?.xLabel || "",
+      yLabel: normalized?.config?.yLabel || "",
+      palette: normalized?.config?.palette || "cyan",
+      showGrid: normalized?.config?.showGrid ?? true,
+      showLegend: normalized?.config?.showLegend ?? ((normalized?.type || chart.type) === "pie"),
+      curved:
+        normalized?.config?.curved ??
+        ((normalized?.type || chart.type) === "line" || (normalized?.type || chart.type) === "area"),
     },
   };
 };
-// ─── Main component ─────────────────────────────────────────────────────────────
+
+function ChartPreview({ chart }: { chart: DatasetChart }) {
+  const normalized = normalizeDatasetChart(chart);
+  if (!normalized || !normalized.data.length) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 overflow-hidden rounded-lg border border-border">
+      <ChartPanel
+        title={normalized.title || "Chart"}
+        type={normalized.type || "bar"}
+        data={normalized.data}
+        dataKey={normalized.dataKey || "value"}
+        xKey={normalized.xKey || "name"}
+        editable={false}
+        config={{
+          showGrid: normalized.config?.showGrid ?? true,
+          showLegend: normalized.config?.showLegend ?? normalized.type === "pie",
+          curved: normalized.config?.curved ?? (normalized.type === "line" || normalized.type === "area"),
+          palette: normalized.config?.palette || "cyan",
+          xLabel: normalized.config?.xLabel || "",
+          yLabel: normalized.config?.yLabel || "",
+        }}
+      />
+    </div>
+  );
+}
 
 export default function ChatInterface() {
   const { dataset } = useDataset();
-
-  // FIX #6 — welcome message reflects whether a dataset is already loaded
   const [messages, setMessages] = useState<Message[]>(() => [buildWelcome(!!dataset)]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [openSql, setOpenSql] = useState<Record<string, boolean>>({});
   const [openTable, setOpenTable] = useState<Record<string, boolean>>({});
 
-  // FIX #5 — point ref at the bottom sentinel, not the scroll container
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Scroll to bottom whenever messages change
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
-  // FIX #6 — update welcome message when dataset availability changes
   useEffect(() => {
     setMessages((prev) => {
       if (prev.length === 1 && prev[0].id === "welcome") {
         return [buildWelcome(!!dataset)];
       }
+
       return prev;
     });
   }, [dataset]);
-
-  // ── Reset chat ─────────────────────────────────────────────────────────────
 
   const handleReset = useCallback(() => {
     setMessages([buildWelcome(!!dataset)]);
@@ -147,21 +193,20 @@ export default function ChatInterface() {
     inputRef.current?.focus();
   }, [dataset]);
 
-  // ── Send message ───────────────────────────────────────────────────────────
-
   const handleSend = useCallback(async () => {
-    // FIX #3 — unified guard used by both button and Enter key
     if (!dataset || !input.trim() || isLoading) return;
 
-    const userMsg: Message = { id: uid(), role: "user", content: input.trim() };
+    const userMsg: Message = {
+      id: uid(),
+      role: "user",
+      content: input.trim(),
+    };
 
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setIsLoading(true);
 
     try {
-      // FIX #1 — pass dataset so API has context
-      // FIX #4 — pass full conversation history for multi-turn memory
       const history = [...messages, userMsg].map(({ role, content }) => ({ role, content }));
       const resp = await chatApi.send(userMsg.content, dataset, history);
 
@@ -170,30 +215,48 @@ export default function ChatInterface() {
           ? {
               ...resp.chart,
               chartType: resp.chart.chart_type,
-            } as ChatChartPayload
+            }
           : isStructuredChart(resp.chart)
             ? resp.chart
-            : toChatChartPayload(resp.chart as DatasetChart)
+            : isDatasetChart(resp.chart)
+              ? toChatChartPayload(resp.chart)
+              : null
         : null;
 
+      const datasetChart = resp.chart
+        ? isLegacyStructuredChart(resp.chart)
+          ? toDatasetChart({
+              ...resp.chart,
+              chartType: resp.chart.chart_type,
+            })
+          : isStructuredChart(resp.chart)
+            ? toDatasetChart(resp.chart)
+            : isDatasetChart(resp.chart)
+              ? normalizeDatasetChart(resp.chart)
+              : null
+        : null;
+
+      const assistantMsg: Message = {
+        id: uid(),
+        role: "assistant",
+        content: resp.answer || "No answer available.",
+        sql: resp.sql || "",
+        chart: datasetChart,
+        chartPayload: structuredChart,
+        table: resp.table || null,
+      };
+
+      setMessages((prev) => [...prev, assistantMsg]);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Chat request failed.";
       setMessages((prev) => [
         ...prev,
         {
           id: uid(),
           role: "assistant",
-          content: resp.answer,
-          sql: resp.sql,
-          chart: null,
-          chartPayload: structuredChart,
-          table: resp.table || null,
+          content: errorMsg,
+          isError: true,
         },
-      ]);
-    } catch (error) {
-      // FIX #7 — error messages are flagged separately so UI can style them
-      const message = error instanceof Error ? error.message : "Chat request failed.";
-      setMessages((prev) => [
-        ...prev,
-        { id: uid(), role: "assistant", content: message, isError: true },
       ]);
     } finally {
       setIsLoading(false);
@@ -201,23 +264,17 @@ export default function ChatInterface() {
     }
   }, [dataset, input, isLoading, messages]);
 
-  // ── Enter key handler ──────────────────────────────────────────────────────
-
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      // FIX #3 — respect all disabled conditions before firing
-      if (e.key === "Enter" && !e.shiftKey && dataset && input.trim() && !isLoading) {
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter" && !event.shiftKey && dataset && input.trim() && !isLoading) {
         void handleSend();
       }
     },
-    [handleSend, dataset, input, isLoading],
+    [dataset, handleSend, input, isLoading],
   );
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   return (
-    <div className="flex flex-col h-full">
-      {/* ── Message list ── */}
+    <div className="flex h-full flex-col bg-background">
       <div className="flex-1 overflow-auto p-4 space-y-4">
         <AnimatePresence initial={false}>
           {messages.map((msg) => (
@@ -227,86 +284,85 @@ export default function ChatInterface() {
               animate={{ opacity: 1, y: 0 }}
               className={`flex gap-3 ${msg.role === "user" ? "justify-end" : ""}`}
             >
-              {/* Assistant avatar */}
               {msg.role === "assistant" && (
                 <div
-                  className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-0.5 ${
+                  className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
                     msg.isError ? "bg-destructive/15" : "bg-primary/15"
                   }`}
                 >
                   {msg.isError ? (
-                    <AlertCircle className="w-3.5 h-3.5 text-destructive" />
+                    <AlertCircle className="h-3.5 w-3.5 text-destructive" />
                   ) : (
-                    <Sparkles className="w-3.5 h-3.5 text-primary" />
+                    <Sparkles className="h-3.5 w-3.5 text-primary" />
                   )}
                 </div>
               )}
 
-              {/* Bubble */}
               <div
-                className={`max-w-[75%] px-4 py-3 text-sm leading-relaxed ${
+                className={`max-w-[75%] rounded-lg px-4 py-3 text-sm leading-relaxed ${
                   msg.role === "user"
-                    ? "bg-primary text-primary-foreground rounded-tl-2xl rounded-tr-2xl rounded-bl-2xl"
+                    ? "bg-primary text-primary-foreground"
                     : msg.isError
-                      // FIX #7 — error bubbles get distinct destructive styling
-                      ? "bg-destructive/10 border border-destructive/20 text-destructive rounded-tr-2xl rounded-br-2xl rounded-tl-2xl"
-                      : "bg-card card-elevated text-card-foreground rounded-tr-2xl rounded-br-2xl rounded-tl-2xl"
+                      ? "border border-destructive/20 bg-destructive/10 text-destructive"
+                      : "bg-card text-card-foreground card-elevated"
                 }`}
               >
                 <ReactMarkdown
                   components={{
                     p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
                     code: ({ children }) => (
-                      <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono">{children}</code>
+                      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+                        {children}
+                      </code>
                     ),
                     strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                    em: ({ children }) => <em className="text-muted-foreground italic">{children}</em>,
+                    em: ({ children }) => <em className="italic text-muted-foreground">{children}</em>,
                   }}
                 >
                   {msg.content}
                 </ReactMarkdown>
 
-                {/* SQL block */}
                 {msg.sql && (
                   <div className="mt-3">
                     <button
                       onClick={() => setOpenSql((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))}
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      className="text-xs text-muted-foreground transition-colors hover:text-foreground"
                     >
                       {openSql[msg.id] ? "Hide SQL" : "Show SQL"}
                     </button>
                     {openSql[msg.id] && (
-                      <div className="mt-2 bg-muted rounded-md p-3">
-                        <p className="text-xs text-muted-foreground mb-1 font-medium">Generated SQL</p>
-                        <pre className="text-xs font-mono text-primary overflow-x-auto whitespace-pre-wrap">{msg.sql}</pre>
+                      <div className="mt-2 rounded-md bg-muted p-3">
+                        <p className="mb-1 text-xs font-medium text-muted-foreground">Generated SQL</p>
+                        <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs text-primary">
+                          {msg.sql}
+                        </pre>
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* FIX #9  render actual chart preview instead of just describing it */}
-                {msg.chartPayload && (
-                  <ChatChartCard payload={msg.chartPayload} table={msg.table} />
-                )}
-
+                {msg.chartPayload && <ChatChartCard payload={msg.chartPayload} table={msg.table} />}
                 {!msg.chartPayload && msg.chart && <ChartPreview chart={msg.chart} />}
 
                 {!msg.chartPayload && !msg.chart && msg.table && (
                   <div className="mt-3">
                     <button
                       onClick={() => setOpenTable((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))}
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      className="text-xs text-muted-foreground transition-colors hover:text-foreground"
                     >
                       {openTable[msg.id] ? "Hide data table" : "Show data table"}
                     </button>
                     {openTable[msg.id] && (
-                      <div className="mt-2 border border-border rounded-lg overflow-auto max-h-56">
+                      <div className="mt-2 max-h-56 overflow-auto rounded-lg border border-border">
                         <table className="w-full text-xs">
                           <thead className="bg-muted/30">
                             <tr>
-                              {msg.table.columns.map((col) => (
-                                <th key={col} className="px-2 py-1 text-left text-muted-foreground font-medium">
-                                  {col}
+                              {msg.table.columns.map((column) => (
+                                <th
+                                  key={column}
+                                  className="px-2 py-1 text-left font-medium text-muted-foreground"
+                                >
+                                  {column}
                                 </th>
                               ))}
                             </tr>
@@ -314,9 +370,9 @@ export default function ChatInterface() {
                           <tbody>
                             {msg.table.rows.slice(0, 20).map((row, index) => (
                               <tr key={index} className="border-t border-border/60">
-                                {msg.table.columns.map((col) => (
-                                  <td key={col} className="px-2 py-1 text-foreground">
-                                    {String(row[col] ?? "")}
+                                {msg.table?.columns.map((column) => (
+                                  <td key={column} className="px-2 py-1 text-foreground">
+                                    {String(row[column] ?? "")}
                                   </td>
                                 ))}
                               </tr>
@@ -327,33 +383,29 @@ export default function ChatInterface() {
                     )}
                   </div>
                 )}
+              </div>
 
-
-              </div>
-
-              {/* User avatar */}
               {msg.role === "user" && (
-                <div className="w-7 h-7 rounded-md bg-secondary flex items-center justify-center shrink-0 mt-0.5">
-                  <User className="w-3.5 h-3.5 text-secondary-foreground" />
+                <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-secondary">
+                  <User className="h-3.5 w-3.5 text-secondary-foreground" />
                 </div>
               )}
             </motion.div>
           ))}
         </AnimatePresence>
 
-        {/* Typing indicator */}
         {isLoading && (
           <div className="flex gap-3">
-            <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center shrink-0">
-              <Sparkles className="w-3.5 h-3.5 text-primary animate-pulse-glow" />
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/15">
+              <Sparkles className="h-3.5 w-3.5 animate-pulse-glow text-primary" />
             </div>
-            <div className="bg-card card-elevated rounded-tr-2xl rounded-br-2xl rounded-tl-2xl px-4 py-3">
+            <div className="rounded-lg bg-card px-4 py-3 card-elevated">
               <div className="flex gap-1">
-                {[0, 1, 2].map((i) => (
+                {[0, 1, 2].map((index) => (
                   <div
-                    key={i}
-                    className="typing-dot"
-                    style={{ animationDelay: `${i * 150}ms` }}
+                    key={index}
+                    className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground"
+                    style={{ animationDelay: `${index * 200}ms` }}
                   />
                 ))}
               </div>
@@ -361,67 +413,45 @@ export default function ChatInterface() {
           </div>
         )}
 
-        {/* FIX #5 — bottom sentinel for reliable scroll-to-bottom */}
         <div ref={bottomRef} />
       </div>
 
-      {/* ── Input bar ── */}
-      <div className="p-4 border-t border-border">
+      <div className="border-t border-border bg-background p-4">
         <div className="flex gap-2">
-          {/* FIX #8 — reset / new chat button */}
           {messages.length > 1 && (
             <button
               onClick={handleReset}
               disabled={isLoading}
               title="Reset chat"
-              className="rounded-lg border border-border bg-card px-3 py-2.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40"
+              className="rounded-lg border border-border bg-card px-3 py-2.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
             >
-              <RotateCcw className="w-4 h-4" />
+              <RotateCcw className="h-4 w-4" />
             </button>
           )}
 
           <input
             ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(event) => setInput(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={
-              dataset
-                ? "Ask about your data…"
-                : "Upload a dataset before asking questions"
-            }
+            placeholder={dataset ? "Ask about your data" : "Upload a dataset before asking questions"}
             disabled={!dataset || isLoading}
-            // FIX #10 — tooltip on disabled state
             title={!dataset ? "Upload a dataset first to start chatting" : undefined}
-            className="flex-1 bg-card border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 rounded-lg border border-border bg-card px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           />
 
           <button
-            onClick={() => { void handleSend(); }}
+            onClick={() => {
+              void handleSend();
+            }}
             disabled={!dataset || !input.trim() || isLoading}
             title={!dataset ? "Upload a dataset first" : "Send message"}
-            className="bg-primary text-primary-foreground rounded-lg px-4 py-2.5 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            className="rounded-lg bg-primary px-4 py-2.5 text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Send className="w-4 h-4" />
+            <Send className="h-4 w-4" />
           </button>
         </div>
       </div>
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

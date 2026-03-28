@@ -18,10 +18,13 @@ const toDatasetChart = (chart: ChatChartPayload): DatasetChart => ({
   title: chart.title,
   type: chart.chartType,
   xKey: chart.xKey,
-  dataKey: "value",
+  dataKey: chart.yKey,
   data: chart.rows.map((row) => ({
+    ...row,
     name: row[chart.xKey] as string | number,
     value: Number(row[chart.yKey] ?? 0),
+    x: row.x as string | number | undefined,
+    label: row.label as string | number | undefined,
   })),
 });
 

@@ -27,20 +27,56 @@ const formatTable = (columns, rows) => ({
   rows,
 });
 
-const buildChart = (title, chartType, xKey, yKey, rows, config = {}) => ({
-  title,
-  chartType,
-  xKey,
-  yKey,
-  rows,
-  config: {
-    palette: "cyan",
-    showGrid: chartType !== "pie",
-    showLegend: chartType === "pie",
-    curved: chartType === "line",
-    ...config,
-  },
+const toChartPoint = (label, value, extra = {}) => ({
+  ...extra,
+  name: String(label ?? "Unknown"),
+  value: Number(value),
+  x: String(label ?? "Unknown"),
+  label: String(label ?? "Unknown"),
 });
+
+const normalizeChart = (chart) => {
+  if (!chart || typeof chart !== "object" || !Array.isArray(chart.data)) {
+    return null;
+  }
+
+  const data = chart.data
+    .map((point, index) =>
+      toChartPoint(
+        point?.name ?? point?.label ?? point?.x ?? point?.period ?? `Item ${index + 1}`,
+        point?.value ?? point?.y ?? 0,
+        point,
+      ),
+    )
+    .filter((point) => Number.isFinite(point.value));
+
+  if (!data.length) {
+    return null;
+  }
+
+  return {
+    title: String(chart.title || "Chart"),
+    type: chart.type || "bar",
+    xKey: "name",
+    dataKey: "value",
+    data,
+    config: {
+      palette: "cyan",
+      showGrid: chart.type !== "pie",
+      showLegend: chart.type === "pie",
+      curved: chart.type === "line" || chart.type === "area",
+      ...(chart.config && typeof chart.config === "object" ? chart.config : {}),
+    },
+  };
+};
+
+const buildChart = (title, type, rows, config = {}) =>
+  normalizeChart({
+    title,
+    type,
+    data: rows,
+    config,
+  });
 
 const findColumns = (dataset, question) => {
   const columns = dataset.summary?.columns || [];
@@ -68,16 +104,7 @@ const buildDatasetOverviewResponse = (dataset) => {
     answer: `The current dataset **${dataset.fileName}** has ${dataset.totalRows.toLocaleString()} rows and ${dataset.headers.length} columns.`,
     sql: "",
     insights: summary?.insights?.slice(0, 3) || [],
-    chart: chart
-      ? buildChart(
-          chart.title,
-          chart.type,
-          chart.xKey || "name",
-          chart.dataKey || "value",
-          chart.data || [],
-          chart.config || {},
-        )
-      : null,
+    chart: normalizeChart(chart),
     table: formatTable(dataset.headers, dataset.previewRows.slice(0, 10).map((row) => (
       Object.fromEntries(dataset.headers.map((header, index) => [header, row[index] ?? ""]))
     ))),
@@ -116,14 +143,14 @@ const buildCategoricalAggregation = (dataset, question, metricMode) => {
 
   const resultRows = [...grouped.entries()].map(([name, value]) => {
     if (metricMode === "count" || !numeric) {
-      return { name, value };
+      return toChartPoint(name, value);
     }
 
     if (metricMode === "average") {
-      return { name, value: Number((value.sum / Math.max(value.count, 1)).toFixed(2)) };
+      return toChartPoint(name, Number((value.sum / Math.max(value.count, 1)).toFixed(2)));
     }
 
-    return { name, value: Number(value.sum.toFixed(2)) };
+    return toChartPoint(name, Number(value.sum.toFixed(2)));
   });
 
   resultRows.sort((a, b) => b.value - a.value);
@@ -154,8 +181,6 @@ const buildCategoricalAggregation = (dataset, question, metricMode) => {
     chart: buildChart(
       titlePrefix,
       limitedRows.length <= 6 && metricMode === "count" ? "pie" : "bar",
-      "name",
-      "value",
       limitedRows,
       {
         xLabel: categorical.name,
@@ -188,7 +213,7 @@ const buildTrendResponse = (dataset, question) => {
   const rows = [...grouped.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .slice(0, 24)
-    .map(([period, value]) => ({ period, value: Number(value.toFixed(2)) }));
+    .map(([period, value]) => toChartPoint(period, Number(value.toFixed(2)), { period }));
 
   if (rows.length < 2) return null;
 
@@ -202,8 +227,6 @@ const buildTrendResponse = (dataset, question) => {
     chart: buildChart(
       `${numeric.name} Over Time`,
       "line",
-      "period",
-      "value",
       rows,
       {
         xLabel: date.name,
@@ -271,4 +294,3 @@ export const buildFallbackChatResponse = ({ message, dataset }) => {
 
   return buildDatasetOverviewResponse(dataset);
 };
-

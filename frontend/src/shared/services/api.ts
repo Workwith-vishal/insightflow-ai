@@ -148,6 +148,90 @@ const normalizeChartType = (
   return "bar";
 };
 
+const normalizeDatasetChartPoint = (
+  value: unknown,
+  index: number,
+): NonNullable<DatasetRecord["summary"]["chartSuggestions"][number]["data"]>[number] | null => {
+  const point = asRecord(value);
+  const rawLabel = point.name ?? point.label ?? point.x ?? `Item ${index + 1}`;
+  const primitiveLabel = asPrimitive(rawLabel);
+  const label = primitiveLabel === null ? `Item ${index + 1}` : String(primitiveLabel);
+  const numericValue = asNumber(point.value ?? point.y, Number.NaN);
+
+  if (!label || !Number.isFinite(numericValue)) {
+    return null;
+  }
+
+  return {
+    ...point,
+    name: label,
+    value: numericValue,
+    x: asPrimitive(point.x) ?? label,
+    label: asPrimitive(point.label) ?? label,
+    y: asOptionalNumber(point.y),
+  };
+};
+
+const normalizeDatasetChart = (
+  value: unknown,
+): DatasetRecord["summary"]["chartSuggestions"][number] | null => {
+  const chart = asRecord(value);
+  if (!Object.keys(chart).length) return null;
+
+  let data = asArray(chart.data)
+    .map((point, index) => normalizeDatasetChartPoint(point, index))
+    .filter((point): point is NonNullable<typeof point> => Boolean(point));
+
+  if (!data.length) {
+    const labels = asPrimitiveArray(chart.labels);
+    const datasets = asArray(chart.datasets).map((datasetRaw) => {
+      const dataset = asRecord(datasetRaw);
+      return {
+        label: asString(dataset.label) || undefined,
+        data: asPrimitiveArray(dataset.data),
+      };
+    });
+
+    const primaryDataset = datasets[0];
+    if (labels.length && primaryDataset?.data?.length) {
+      data = labels
+        .map((label, index) =>
+          normalizeDatasetChartPoint(
+            {
+              name: label ?? `Item ${index + 1}`,
+              value: primaryDataset.data?.[index],
+              x: label,
+              label,
+            },
+            index,
+          ),
+        )
+        .filter((point): point is NonNullable<typeof point> => Boolean(point));
+    }
+  }
+
+  if (!data.length) {
+    return null;
+  }
+
+  return {
+    title: asString(chart.title, "Chart"),
+    type: normalizeChartType(chart.type ?? chart.chartType ?? chart.chart_type),
+    xKey: asString(chart.xKey ?? chart.x_key, "name"),
+    dataKey: asString(chart.dataKey ?? chart.yKey ?? chart.y_key, "value"),
+    data,
+    labels: asPrimitiveArray(chart.labels),
+    datasets: asArray(chart.datasets).map((datasetRaw) => {
+      const dataset = asRecord(datasetRaw);
+      return {
+        label: asString(dataset.label) || undefined,
+        data: asPrimitiveArray(dataset.data),
+      };
+    }),
+    config: asRecord(chart.config) as DatasetRecord["summary"]["chartSuggestions"][number]["config"],
+  };
+};
+
 const normalizeDatasetRecord = (raw: unknown): DatasetRecord => {
   const rawRecord = asRecord(raw);
   const summaryRecord = asRecord(rawRecord.summary);
@@ -193,27 +277,9 @@ const normalizeDatasetRecord = (raw: unknown): DatasetRecord => {
         };
       }),
       insights: asStringArray(summaryRecord.insights),
-      chartSuggestions: rawCharts.map((chartRaw) => {
-        const chart = asRecord(chartRaw);
-        const datasets = asArray(chart.datasets).map((datasetRaw) => {
-          const dataset = asRecord(datasetRaw);
-          return {
-            label: asString(dataset.label) || undefined,
-            data: asPrimitiveArray(dataset.data),
-          };
-        });
-
-        return {
-          title: asString(chart.title),
-          type: normalizeChartType(chart.type ?? chart.chartType ?? chart.chart_type),
-          xKey: asString(chart.xKey ?? chart.x_key, "name"),
-          dataKey: asString(chart.dataKey ?? chart.yKey ?? chart.y_key, "value"),
-          data: asArray(chart.data) as DatasetRecord["summary"]["chartSuggestions"][number]["data"],
-          labels: asPrimitiveArray(chart.labels),
-          datasets,
-          config: asRecord(chart.config) as DatasetRecord["summary"]["chartSuggestions"][number]["config"],
-        };
-      }),
+      chartSuggestions: rawCharts
+        .map((chartRaw) => normalizeDatasetChart(chartRaw))
+        .filter((chart): chart is NonNullable<typeof chart> => Boolean(chart)),
     },
   };
 };
@@ -229,8 +295,37 @@ const normalizeChatResponse = (response: ChatResponse): ChatResponse => {
   const yKey = chart.yKey ?? chart.y_key;
 
   if (!chartType || !xKey || !yKey || !Array.isArray(chart.rows)) {
-    return response;
+    const normalizedDatasetChart = normalizeDatasetChart(chart);
+    if (!normalizedDatasetChart) {
+      return {
+        ...response,
+        chart: null,
+      };
+    }
+
+    return {
+      ...response,
+      chart: normalizedDatasetChart,
+    };
   }
+
+  const normalizedRows = asArray(chart.rows)
+    .map((rowRaw, index) => {
+      const row = asRecord(rowRaw);
+      const primitiveLabel = asPrimitive(row[xKey] ?? row.name ?? row.label ?? row.x);
+      const label = primitiveLabel === null ? `Item ${index + 1}` : String(primitiveLabel);
+      const numericValue = asNumber(row[yKey] ?? row.value ?? row.y, Number.NaN);
+      if (!label || !Number.isFinite(numericValue)) {
+        return null;
+      }
+
+      return {
+        ...row,
+        [asString(xKey)]: label,
+        [asString(yKey)]: numericValue,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
 
   return {
     ...response,
@@ -239,7 +334,7 @@ const normalizeChatResponse = (response: ChatResponse): ChatResponse => {
       chartType: normalizeChartType(chartType),
       xKey: asString(xKey),
       yKey: asString(yKey),
-      rows: asArray(chart.rows) as Array<Record<string, string | number>>,
+      rows: normalizedRows,
       config: asRecord(chart.config) as ChatChartPayload["config"],
     },
   };

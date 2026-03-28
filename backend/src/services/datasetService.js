@@ -103,6 +103,14 @@ const detectDomain = (headers) => {
 const topEntries = (map, limit = 10) =>
   [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
 
+const toChartPoint = (label, value, extra = {}) => ({
+  ...extra,
+  name: String(label ?? "Unknown"),
+  value: Number(value),
+  x: String(label ?? "Unknown"),
+  label: String(label ?? "Unknown"),
+});
+
 const buildColumnProfiles = (headers, records) =>
   headers.map((header) => {
     const values = records.map((row) => normalizeText(row[header]));
@@ -212,7 +220,7 @@ const buildHistogram = (header, records) => {
   const span = max - min || 1;
 
   const buckets = Array.from({ length: bucketCount }, (_, index) => ({
-    name: `${(min + (span * index) / bucketCount).toFixed(1)}-${(min + (span * (index + 1)) / bucketCount).toFixed(1)}`,
+    range: `${(min + (span * index) / bucketCount).toFixed(1)}-${(min + (span * (index + 1)) / bucketCount).toFixed(1)}`,
     value: 0,
   }));
 
@@ -227,7 +235,7 @@ const buildHistogram = (header, records) => {
     type: "bar",
     xKey: "name",
     dataKey: "value",
-    data: buckets,
+    data: buckets.map((bucket) => toChartPoint(bucket.range, bucket.value)),
     config: {
       xLabel: header,
       yLabel: "Count",
@@ -250,7 +258,7 @@ const buildChartSuggestions = (records, columns) => {
       counts.set(key, (counts.get(key) || 0) + 1);
     });
 
-    const data = topEntries(counts, 10).map(([name, value]) => ({ name, value }));
+    const data = topEntries(counts, 8).map(([name, value]) => toChartPoint(name, value));
     charts.push({
       title: `${categoricalColumns[0].name} Distribution`,
       type: data.length <= 6 ? "pie" : "bar",
@@ -277,8 +285,8 @@ const buildChartSuggestions = (records, columns) => {
 
     const data = [...grouped.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .slice(0, 24)
-      .map(([name, value]) => ({ name, value: Number(value.toFixed(2)) }));
+      .slice(0, 8)
+      .map(([name, value]) => toChartPoint(name, Number(value.toFixed(2))));
 
     if (data.length > 1) {
       charts.push({
@@ -313,7 +321,8 @@ const buildChartSuggestions = (records, columns) => {
         value: Number((meta.sum / Math.max(meta.count, 1)).toFixed(2)),
       }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 10);
+      .slice(0, 8)
+      .map((point) => toChartPoint(point.name, point.value));
 
     if (data.length) {
       charts.push({
@@ -389,4 +398,3 @@ export const parseCsvDataset = ({ fileName, csvText }) => {
     },
   };
 };
-
